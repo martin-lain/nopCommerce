@@ -8757,12 +8757,15 @@ pre {
   .product-grid .item-box .add-info {
       display: block;
       position: absolute;
-      top: 0;
+      top: 50%;
       right: 0;
-      bottom: 0;
       left: 0;
       z-index: 2;
       opacity: 0;
       transition: .5s ease;
+  }
+  
+  .product-grid .item-box:hover .add-info {
+    opacity: 1;
   }
 }
