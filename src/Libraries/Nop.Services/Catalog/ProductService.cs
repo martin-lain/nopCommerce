@@ -696,10 +696,10 @@ namespace Nop.Services.Catalog
                 query = from p in query
                         where p.Published && p.VisibleIndividually && p.MarkAsNew && !p.Deleted &&
                         LinqToDB.Sql.Between(DateTime.UtcNow, p.MarkAsNewStartDateTimeUtc ?? DateTime.MinValue, p.MarkAsNewEndDateTimeUtc ?? DateTime.MaxValue)
+                        orderby p.CreatedOnUtc descending
                         select p;
 
-                return query.Take(_catalogSettings.NewProductsNumber)
-                    .OrderBy(ProductSortingEnum.CreatedOn);
+                return query.Take(_catalogSettings.NewProductsNumber);
             });
         }
 
@@ -827,6 +827,7 @@ namespace Nop.Services.Catalog
             productsQuery =
                 from p in productsQuery
                 where !p.Deleted &&
+                    (!visibleIndividuallyOnly || p.VisibleIndividually) &&
                     (vendorId == 0 || p.VendorId == vendorId) &&
                     (
                         warehouseId == 0 ||
@@ -836,7 +837,7 @@ namespace Nop.Services.Catalog
                         )
                     ) &&
                     (productType == null || p.ProductTypeId == (int)productType) &&
-                    (showHidden == false || LinqToDB.Sql.Between(DateTime.UtcNow, p.AvailableStartDateTimeUtc ?? DateTime.MinValue, p.AvailableEndDateTimeUtc ?? DateTime.MaxValue)) &&
+                    (showHidden || LinqToDB.Sql.Between(DateTime.UtcNow, p.AvailableStartDateTimeUtc ?? DateTime.MinValue, p.AvailableEndDateTimeUtc ?? DateTime.MaxValue)) &&
                     (priceMin == null || p.Price >= priceMin) &&
                     (priceMax == null || p.Price <= priceMax)
                 select p;
