@@ -17,6 +17,7 @@ using Microsoft.Net.Http.Headers;
 using Nop.Core;
 using Nop.Core.Configuration;
 using Nop.Core.Domain.Common;
+using Nop.Core.Http;
 using Nop.Core.Infrastructure;
 using Nop.Data;
 using Nop.Data.Migrations;
@@ -27,9 +28,11 @@ using Nop.Services.Localization;
 using Nop.Services.Logging;
 using Nop.Services.Media.RoxyFileman;
 using Nop.Services.Plugins;
+using Nop.Services.ScheduleTasks;
 using Nop.Web.Framework.Globalization;
 using Nop.Web.Framework.Mvc.Routing;
-using WebMarkupMin.AspNetCore5;
+using WebMarkupMin.AspNetCore6;
+using WebOptimizer;
 
 namespace Nop.Web.Framework.Infrastructure.Extensions
 {
@@ -54,10 +57,6 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
             //further actions are performed only when the database is installed
             if (DataSettingsManager.IsDatabaseInstalled())
             {
-                //initialize and start schedule tasks
-                Services.Tasks.TaskManager.Instance.Initialize();
-                Services.Tasks.TaskManager.Instance.Start();
-
                 //log application start
                 engine.Resolve<ILogger>().InformationAsync("Application started").Wait();
 
@@ -69,15 +68,13 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
                 //update nopCommerce core and db
                 var migrationManager = engine.Resolve<IMigrationManager>();
                 var assembly = Assembly.GetAssembly(typeof(ApplicationBuilderExtensions));
-                migrationManager.ApplyUpMigrations(assembly, true);
+                migrationManager.ApplyUpMigrations(assembly, MigrationProcessType.Update);
                 assembly = Assembly.GetAssembly(typeof(IMigrationManager));
-                migrationManager.ApplyUpMigrations(assembly, true);
+                migrationManager.ApplyUpMigrations(assembly, MigrationProcessType.Update);
 
-#if DEBUG
-                //prevent save the update migrations into the DB during the developing process  
-                var versions = EngineContext.Current.Resolve<IRepository<MigrationVersionInfo>>();
-                versions.DeleteAsync(mvi => mvi.Description.StartsWith(string.Format(NopMigrationDefaults.UpdateMigrationDescriptionPrefix, NopVersion.FULL_VERSION)));
-#endif
+                var taskScheduler = engine.Resolve<ITaskScheduler>();
+                taskScheduler.InitializeAsync().Wait();
+                taskScheduler.StartScheduler();
             }
         }
 
@@ -89,7 +86,7 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
         {
             var appSettings = EngineContext.Current.Resolve<AppSettings>();
             var webHostEnvironment = EngineContext.Current.Resolve<IWebHostEnvironment>();
-            var useDetailedExceptionPage = appSettings.CommonConfig.DisplayFullErrorStack || webHostEnvironment.IsDevelopment();
+            var useDetailedExceptionPage = appSettings.Get<CommonConfig>().DisplayFullErrorStack || webHostEnvironment.IsDevelopment();
             if (useDetailedExceptionPage)
             {
                 //get detailed exceptions for developing and testing purposes
@@ -113,7 +110,7 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
                     try
                     {
                         //check whether database is installed
-                        if (await DataSettingsManager.IsDatabaseInstalledAsync())
+                        if (DataSettingsManager.IsDatabaseInstalled())
                         {
                             //get current customer
                             var currentCustomer = await EngineContext.Current.Resolve<IWorkContext>().GetCurrentCustomerAsync();
@@ -149,7 +146,7 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
                         var originalPath = context.HttpContext.Request.Path;
                         var originalQueryString = context.HttpContext.Request.QueryString;
 
-                        if (await DataSettingsManager.IsDatabaseInstalledAsync())
+                        if (DataSettingsManager.IsDatabaseInstalled())
                         {
                             var commonSettings = EngineContext.Current.Resolve<CommonSettings>();
 
@@ -207,10 +204,34 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
         {
             if (!DataSettingsManager.IsDatabaseInstalled())
                 return;
-            
+
             //whether to use compression (gzip by default)
             if (EngineContext.Current.Resolve<CommonSettings>().UseResponseCompression)
                 application.UseResponseCompression();
+        }
+
+        /// <summary>
+        /// Adds WebOptimizer to the <see cref="IApplicationBuilder"/> request execution pipeline
+        /// </summary>
+        /// <param name="application">Builder for configuring an application's request pipeline</param>
+        public static void UseNopWebOptimizer(this IApplicationBuilder application)
+        {
+            var fileProvider = EngineContext.Current.Resolve<INopFileProvider>();
+            var webHostEnvironment = EngineContext.Current.Resolve<IWebHostEnvironment>();
+
+            application.UseWebOptimizer(webHostEnvironment, new[]
+            {
+                new FileProviderOptions
+                {
+                    RequestPath =  new PathString("/Plugins"),
+                    FileProvider = new PhysicalFileProvider(fileProvider.MapPath(@"Plugins"))
+                },
+                new FileProviderOptions
+                {
+                    RequestPath =  new PathString("/Themes"),
+                    FileProvider = new PhysicalFileProvider(fileProvider.MapPath(@"Themes"))
+                }
+            });
         }
 
         /// <summary>
@@ -224,8 +245,8 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
 
             void staticFileResponse(StaticFileResponseContext context)
             {
-                if (!string.IsNullOrEmpty(appSettings.CommonConfig.StaticFilesCacheControl))
-                    context.Context.Response.Headers.Append(HeaderNames.CacheControl, appSettings.CommonConfig.StaticFilesCacheControl);
+                if (!string.IsNullOrEmpty(appSettings.Get<CommonConfig>().StaticFilesCacheControl))
+                    context.Context.Response.Headers.Append(HeaderNames.CacheControl, appSettings.Get<CommonConfig>().StaticFilesCacheControl);
             }
 
             //common static files
@@ -248,13 +269,13 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
             };
 
             //exclude files in blacklist
-            if (!string.IsNullOrEmpty(appSettings.CommonConfig.PluginStaticFileExtensionsBlacklist))
+            if (!string.IsNullOrEmpty(appSettings.Get<CommonConfig>().PluginStaticFileExtensionsBlacklist))
             {
                 var fileExtensionContentTypeProvider = new FileExtensionContentTypeProvider();
 
-                foreach (var ext in appSettings.CommonConfig.PluginStaticFileExtensionsBlacklist
+                foreach (var ext in appSettings.Get<CommonConfig>().PluginStaticFileExtensionsBlacklist
                     .Split(';', ',')
-                    .Select(e => e.Trim().ToLower())
+                    .Select(e => e.Trim().ToLowerInvariant())
                     .Select(e => $"{(e.StartsWith(".") ? string.Empty : ".")}{e}")
                     .Where(fileExtensionContentTypeProvider.Mappings.ContainsKey))
                 {
@@ -298,6 +319,16 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
                     OnPrepareResponse = staticFileResponse
                 });
             }
+
+            if (appSettings.Get<CommonConfig>().ServeUnknownFileTypes)
+            {
+                application.UseStaticFiles(new StaticFileOptions
+                {
+                    FileProvider = new PhysicalFileProvider(fileProvider.GetAbsolutePath(".well-known")),
+                    RequestPath = new PathString("/.well-known"),
+                    ServeUnknownFileTypes = true,
+                });
+            }
         }
 
         /// <summary>
@@ -339,7 +370,7 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
         {
             application.UseRequestLocalization(async options =>
             {
-                if (!await DataSettingsManager.IsDatabaseInstalledAsync())
+                if (!DataSettingsManager.IsDatabaseInstalled())
                     return;
 
                 //prepare supported cultures
@@ -347,9 +378,15 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
                     .OrderBy(language => language.DisplayOrder)
                     .Select(language => new CultureInfo(language.LanguageCulture)).ToList();
                 options.SupportedCultures = cultures;
+                options.SupportedUICultures = cultures;
                 options.DefaultRequestCulture = new RequestCulture(cultures.FirstOrDefault());
+                options.ApplyCurrentCultureToResponseHeaders = true;
 
-                options.AddInitialRequestCultureProvider(new NopRequestCultureProvider(options));
+                //configure culture providers
+                options.AddInitialRequestCultureProvider(new NopSeoUrlCultureProvider());
+                var cookieRequestCultureProvider = options.RequestCultureProviders.OfType<CookieRequestCultureProvider>().FirstOrDefault();
+                if (cookieRequestCultureProvider is not null)
+                    cookieRequestCultureProvider.CookieName = $"{NopCookieDefaults.Prefix}{NopCookieDefaults.CultureCookie}";
             });
         }
 
@@ -375,7 +412,7 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
         {
             var appSettings = EngineContext.Current.Resolve<AppSettings>();
 
-            if (appSettings.HostingConfig.UseProxy)
+            if (appSettings.Get<HostingConfig>().UseProxy)
             {
                 var options = new ForwardedHeadersOptions
                 {
@@ -385,15 +422,15 @@ namespace Nop.Web.Framework.Infrastructure.Extensions
                     ForwardLimit = 2
                 };
 
-                if (!string.IsNullOrEmpty(appSettings.HostingConfig.ForwardedForHeaderName))
-                    options.ForwardedForHeaderName = appSettings.HostingConfig.ForwardedForHeaderName;
+                if (!string.IsNullOrEmpty(appSettings.Get<HostingConfig>().ForwardedForHeaderName))
+                    options.ForwardedForHeaderName = appSettings.Get<HostingConfig>().ForwardedForHeaderName;
 
-                if (!string.IsNullOrEmpty(appSettings.HostingConfig.ForwardedProtoHeaderName))
-                    options.ForwardedProtoHeaderName = appSettings.HostingConfig.ForwardedProtoHeaderName;
+                if (!string.IsNullOrEmpty(appSettings.Get<HostingConfig>().ForwardedProtoHeaderName))
+                    options.ForwardedProtoHeaderName = appSettings.Get<HostingConfig>().ForwardedProtoHeaderName;
 
-                if (!string.IsNullOrEmpty(appSettings.HostingConfig.KnownProxies))
+                if (!string.IsNullOrEmpty(appSettings.Get<HostingConfig>().KnownProxies))
                 {
-                    foreach (var strIp in appSettings.HostingConfig.KnownProxies.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList())
+                    foreach (var strIp in appSettings.Get<HostingConfig>().KnownProxies.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList())
                     {
                         if (IPAddress.TryParse(strIp, out var ip))
                             options.KnownProxies.Add(ip);

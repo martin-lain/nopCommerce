@@ -1,6 +1,9 @@
 ﻿@model CheckoutPickupPointsModel
-@using System.Globalization
+
 @using System.Text
+@{
+    var scriptLocation = ViewData["scriptLocation"] as ResourceLocation? ?? ResourceLocation.Footer;
+}
 
 @if (!Model.PickupInStoreOnly && Model.PickupPoints.Any())
 {
@@ -12,7 +15,7 @@
         <div class="description">
             @T("Checkout.PickupPoints.Description")
         </div>
-        <script asp-location="Footer">
+        <script asp-location="@scriptLocation">
             $(document).ready(function () {
                 togglePickupInStore($("#@Html.IdFor(model => model.PickupInStore)"));
             });
@@ -94,7 +97,7 @@
                 </select>
             }
         </div>
-        @await Component.InvokeAsync("Widget", new { widgetZone = PublicWidgetZones.CheckoutPickUpPointsAfter })
+        @await Component.InvokeAsync("Widget", new { widgetZone = PublicWidgetZones.CheckoutPickUpPointsAfter, additionalData = Model })
         if (Model.DisplayPickupPointsOnMap)
         {
             var src = $"https://maps.googleapis.com/maps/api/js{(string.IsNullOrEmpty(Model.GoogleMapsApiKey) ? string.Empty : $"?key={Model.GoogleMapsApiKey}")}";

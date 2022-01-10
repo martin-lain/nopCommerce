@@ -128,13 +128,14 @@ namespace Nop.Web.Framework.TagHelpers.Admin
 
             //generate editor
             var tagName = For != null ? For.Name : Name;
-            bool.TryParse(IsMultiple, out var multiple);
+            _ = bool.TryParse(IsMultiple, out var multiple);
             if (!string.IsNullOrEmpty(tagName))
             {
                 IHtmlContent selectList;
                 if (multiple)
                 {
-                    selectList = _htmlHelper.Editor(tagName, "MultiSelect", new { htmlAttributes, SelectList = Items });
+                    var templateName = For.ModelExplorer.ModelType == typeof(List<string>) ? "MultiSelectString" : "MultiSelect";
+                    selectList = _htmlHelper.Editor(tagName, templateName, new { htmlAttributes, SelectList = Items });
                 }
                 else
                 {

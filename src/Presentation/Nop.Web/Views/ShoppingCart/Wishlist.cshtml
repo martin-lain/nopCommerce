@@ -7,9 +7,9 @@
     Layout = "_ColumnsOne";
 
     //title
-    Html.AddTitleParts(T("PageTitle.Wishlist").Text);
+    NopHtml.AddTitleParts(T("PageTitle.Wishlist").Text);
     //page class
-    Html.AppendPageCssClassParts("html-wishlist-page");
+    NopHtml.AppendPageCssClassParts("html-wishlist-page");
 }
 <div class="page wishlist-page">
     <div class="page-title">
@@ -162,7 +162,7 @@
                                                     <ul>
                                                         @foreach (var warning in item.Warnings)
                                                         {
-                                                            <li>@warning</li>
+                                                            <li>@Html.Raw(warning)</li>
                                                         }
                                                     </ul>
                                                 </div>
